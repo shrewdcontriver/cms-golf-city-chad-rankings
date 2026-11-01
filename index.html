@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CMS Golf City Chad Rankings</title>
+  <meta name="description" content="Vote for the top Chads of CMS Golf City Campus. Separate boys & girls rankings." />
+  <link rel="stylesheet" href="css/styles.css" />
+  <!-- Open Graph -->
+  <meta property="og:title" content="CMS Golf City Chad Rankings" />
+  <meta property="og:description" content="Who is the biggest Chad of CMS Golf City? Vote now!" />
+  <meta property="og:type" content="website" />
+</head>
+<body>
+  <header class="header">
+    <div class="logo">
+      CMS Golf City <span>Chad Rankings</span>
+    </div>
+    <div class="credits">
+      by <strong>Anany</strong> · 
+      <a href="https://instagram.com/shrewdcontriver" target="_blank" rel="noopener">@shrewdcontriver</a>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- Tabs -->
+    <div class="tabs">
+      <button class="tab active" data-gender="boy">👨 Boys</button>
+      <button class="tab" data-gender="girl">👩 Girls</button>
+    </div>
+
+    <!-- Register -->
+    <button class="register-btn" id="openRegister">📸 Register Yourself</button>
+
+    <!-- Podium (Top 3) -->
+    <div class="podium" id="podium">
+      <!-- filled by JS -->
+    </div>
+
+    <!-- Full rankings -->
+    <h2 class="section-title">🏆 Rankings</h2>
+    <div class="rankings-list" id="rankingsList">
+      <div class="loading">Loading rankings...</div>
+    </div>
+  </main>
+
+  <!-- Register Modal -->
+  <div class="modal-overlay" id="registerModal">
+    <div class="modal">
+      <h2>Register as a Chad</h2>
+      <form id="registerForm">
+        <div class="form-group">
+          <label for="name">Your Name</label>
+          <input type="text" id="name" required maxlength="40" placeholder="Full name" />
+        </div>
+        <div class="form-group">
+          <label for="className">Class</label>
+          <input type="text" id="className" required maxlength="20" placeholder="e.g. 10-A or Cambridge Year 9" />
+        </div>
+        <div class="form-group">
+          <label for="gender">Gender</label>
+          <select id="gender" required>
+            <option value="">Select...</option>
+            <option value="boy">Boy</option>
+            <option value="girl">Girl</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="photo">Photo of yourself</label>
+          <input type="file" id="photo" accept="image/*" required />
+          <img id="photoPreview" class="photo-preview" alt="Preview" />
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" id="closeRegister">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="submitRegister">Register</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Share Modal -->
+  <div class="modal-overlay share-modal" id="shareModal">
+    <div class="modal">
+      <h2>🎉 Vote counted!</h2>
+      <p>Share the rankings with your friends</p>
+      <div class="share-buttons">
+        <button class="share-btn whatsapp" id="shareWhatsApp">
+          Share on WhatsApp
+        </button>
+        <button class="share-btn twitter" id="shareTwitter">
+          Share on X / Twitter
+        </button>
+        <button class="share-btn copy" id="copyLink">
+          Copy link
+        </button>
+        <button class="btn btn-secondary" id="closeShare" style="margin-top:8px">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast"></div>
+
+  <!-- Firebase SDKs -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+    import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+    import { getFirestore, collection, addDoc, onSnapshot, query, where, orderBy, doc, updateDoc, increment, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+    import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
+    import { firebaseConfig } from "./js/firebase-config.js";
+
+    // Init
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const storage = getStorage(app);
+
+    // State
+    let currentGender = "boy";
+    let people = [];
+    let canVote = true;
+    const VOTE_COOLDOWN_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+    // DOM
+    const podiumEl = document.getElementById("podium");
+    const rankingsListEl = document.getElementById("rankingsList");
+    const tabs = document.querySelectorAll(".tab");
+    const registerModal = document.getElementById("registerModal");
+    const shareModal = document.getElementById("shareModal");
+    const toastEl = document.getElementById("toast");
+
+    // Auth (anonymous)
+    onAuthStateChanged(auth, (user) => {
+      if (!user) {
+        signInAnonymously(auth).catch(console.error);
+      }
+    });
+
+    // Check vote limit
+    function checkVoteLimit() {
+      const last = localStorage.getItem("lastVoteTimestamp");
+      if (!last) {
+        canVote = true;
+        return true;
+      }
+      const elapsed = Date.now() - parseInt(last, 10);
+      canVote = elapsed >= VOTE_COOLDOWN_MS;
+      return canVote;
+    }
+
+    function setVoted() {
+      localStorage.setItem("lastVoteTimestamp", Date.now().toString());
+      canVote = false;
+      render();
+    }
+
+    // Toast
+    function showToast(msg, type = "success") {
+      toastEl.textContent = msg;
+      toastEl.className = `toast show ${type}`;
+      setTimeout(() => toastEl.classList.remove("show"), 3200);
+    }
+
+    // Tabs
+    tabs.forEach(tab => {
+      tab.addEventListener("click", () => {
+        tabs.forEach(t => t.classList.remove("active"));
+        tab.classList.add("active");
+        currentGender = tab.dataset.gender;
+        render();
+      });
+    });
+
+    // Register modal
+    document.getElementById("openRegister").addEventListener("click", () => {
+      registerModal.classList.add("open");
+    });
+    document.getElementById("closeRegister").addEventListener("click", () => {
+      registerModal.classList.remove("open");
+    });
+
+    // Photo preview
+    document.getElementById("photo").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      const preview = document.getElementById("photoPreview");
+      if (file) {
+        preview.src = URL.createObjectURL(file);
+        preview.classList.add("show");
+      } else {
+        preview.classList.remove("show");
+      }
+    });
+
+    // Register form
+    document.getElementById("registerForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const name = document.getElementById("name").value.trim();
+      const className = document.getElementById("className").value.trim();
+      const gender = document.getElementById("gender").value;
+      const photoFile = document.getElementById("photo").files[0];
+
+      if (!name || !className || !gender || !photoFile) {
+        showToast("Please fill all fields", "error");
+        return;
+      }
+
+      if (photoFile.size > 5 * 1024 * 1024) {
+        showToast("Photo must be under 5MB", "error");
+        return;
+      }
+
+      const submitBtn = document.getElementById("submitRegister");
+      submitBtn.disabled = true;
+      submitBtn.textContent = "Uploading...";
+
+      try {
+        // Upload photo
+        const photoRef = ref(storage, `photos/${Date.now()}_${photoFile.name}`);
+        await uploadBytes(photoRef, photoFile);
+        const photoURL = await getDownloadURL(photoRef);
+
+        // Add to Firestore
+        await addDoc(collection(db, "people"), {
+          name,
+          class: className,
+          gender,
+          photoURL,
+          votes: 0,
+          createdAt: serverTimestamp()
+        });
+
+        showToast("Registered successfully! 🎉");
+        registerModal.classList.remove("open");
+        document.getElementById("registerForm").reset();
+        document.getElementById("photoPreview").classList.remove("show");
+
+        // Switch to the correct tab
+        currentGender = gender;
+        tabs.forEach(t => {
+          t.classList.toggle("active", t.dataset.gender === gender);
+        });
+      } catch (err) {
+        console.error(err);
+        showToast("Registration failed. Check Firebase config.", "error");
+      } finally {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Register";
+      }
+    });
+
+    // Vote
+    async function voteFor(personId) {
+      if (!checkVoteLimit()) {
+        showToast("You can only vote once per week!", "error");
+        return;
+      }
+
+      try {
+        const personRef = doc(db, "people", personId);
+        await updateDoc(personRef, { votes: increment(1) });
+        setVoted();
+        showToast("Vote added! 👍");
+        // Open share modal
+        setTimeout(() => shareModal.classList.add("open"), 400);
+      } catch (err) {
+        console.error(err);
+        showToast("Vote failed. Try again.", "error");
+      }
+    }
+
+    // Share helpers
+    const siteUrl = window.location.href.split("#")[0];
+    const shareText = `Check out the CMS Golf City Chad Rankings! Who is the biggest Chad? 🏆 ${siteUrl}`;
+
+    document.getElementById("shareWhatsApp").addEventListener("click", () => {
+      window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, "_blank");
+    });
+    document.getElementById("shareTwitter").addEventListener("click", () => {
+      window.open(`https://twitter.com/intent/tweet?text=${encodeURIComponent(shareText)}`, "_blank");
+    });
+    document.getElementById("copyLink").addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(siteUrl);
+        showToast("Link copied!");
+      } catch {
+        showToast("Could not copy", "error");
+      }
+    });
+    document.getElementById("closeShare").addEventListener("click", () => {
+      shareModal.classList.remove("open");
+    });
+
+    // Render
+    function render() {
+      checkVoteLimit();
+      const filtered = people
+        .filter(p => p.gender === currentGender)
+        .sort((a, b) => b.votes - a.votes);
+
+      // Podium top 3
+      const top3 = filtered.slice(0, 3);
+      if (top3.length === 0) {
+        podiumEl.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><p>No one registered yet for ${currentGender === "boy" ? "Boys" : "Girls"}. Be the first!</p></div>`;
+      } else {
+        const medals = ["gold", "silver", "bronze"];
+        const ranks = ["1", "2", "3"];
+        const classes = ["first", "second", "third"];
+
+        podiumEl.innerHTML = top3.map((p, i) => `
+          <div class="podium-card ${classes[i]}">
+            <div class="rank-badge ${medals[i]}">${ranks[i]}</div>
+            <img class="podium-photo" src="${p.photoURL}" alt="${p.name}" loading="lazy" />
+            <div class="podium-name">${escapeHtml(p.name)}</div>
+            <div class="podium-class">${escapeHtml(p.class)}</div>
+            <div class="podium-votes">${p.votes} vote${p.votes === 1 ? "" : "s"}</div>
+          </div>
+        `).join("");
+      }
+
+      // Full list
+      if (filtered.length === 0) {
+        rankingsListEl.innerHTML = `<div class="empty-state"><p>No entries yet. Register now!</p></div>`;
+      } else {
+        rankingsListEl.innerHTML = filtered.map((p, idx) => `
+          <div class="rank-item">
+            <div class="rank-num">#${idx + 1}</div>
+            <img class="rank-photo" src="${p.photoURL}" alt="${p.name}" loading="lazy" />
+            <div class="rank-info">
+              <div class="rank-name">${escapeHtml(p.name)}</div>
+              <div class="rank-meta">${escapeHtml(p.class)}</div>
+            </div>
+            <div class="votes-count">${p.votes}</div>
+            <button class="vote-btn" data-id="${p.id}" ${canVote ? "" : "disabled"}>
+              ${canVote ? "Vote" : "Voted"}
+            </button>
+          </div>
+        `).join("");
+
+        // Attach vote handlers
+        rankingsListEl.querySelectorAll(".vote-btn").forEach(btn => {
+          btn.addEventListener("click", () => voteFor(btn.dataset.id));
+        });
+      }
+    }
+
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, "&")
+        .replace(/</g, "<")
+        .replace(/>/g, ">")
+        .replace(/"/g, """);
+    }
+
+    // Real-time listener
+    const q = query(collection(db, "people"), orderBy("votes", "desc"));
+    onSnapshot(q, (snapshot) => {
+      people = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      render();
+    }, (err) => {
+      console.error(err);
+      rankingsListEl.innerHTML = `<div class="empty-state"><p>Could not load data. Make sure Firebase is configured correctly.</p></div>`;
+    });
+
+    // Initial check
+    checkVoteLimit();
+  </script>
+</body>
+</html>
